@@ -54,25 +54,20 @@ func (s *server) handleStatsSimulation(w http.ResponseWriter, r *http.Request) {
 	}
 
 	q := r.URL.Query()
-	since := parseSince(q.Get("since"))
-	last := parseLast(q.Get("last"))
-
-	var records []storage.Record
-	var err error
-
-	switch {
-	case !since.IsZero():
-		records, err = s.store.QuerySince(since)
-	case last > 0:
-		records, err = s.store.QueryLast(last)
-	default:
-		rec, qerr := s.store.Latest()
-		err = qerr
-		if rec != nil {
-			records = []storage.Record{*rec}
-		}
+	f := storage.MetricsFilter{
+		Since:       parseSince(q.Get("since")),
+		Last:        parseLast(q.Get("last")),
+		Commit:      q.Get("commit"),
+		Branch:      q.Get("branch"),
+		GoVersion:   q.Get("go_version"),
+		HasFailures: q.Get("has_failures") == "true",
 	}
 
+	if f.Since.IsZero() && f.Last == 0 {
+		f.Last = 1
+	}
+
+	records, err := s.store.QueryMetrics(f)
 	if err != nil {
 		http.Error(w, "query error: "+err.Error(), http.StatusInternalServerError)
 		return

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"strings"
 	"time"
 
 	_ "github.com/mattn/go-sqlite3"
@@ -60,23 +61,53 @@ type Record struct {
 	Payload    json.RawMessage `json:"metrics"`
 }
 
-func (s *Store) QuerySince(since time.Time) ([]Record, error) {
-	rows, err := s.db.Query(
-		"SELECT reported_at, payload FROM metrics WHERE reported_at >= ? ORDER BY reported_at ASC",
-		since.Format(time.RFC3339Nano),
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	return scanRecords(rows)
+// MetricsFilter holds optional filters for querying the metrics table.
+type MetricsFilter struct {
+	Since       time.Time
+	Last        int
+	Commit      string
+	Branch      string
+	GoVersion   string
+	HasFailures bool
 }
 
-func (s *Store) QueryLast(n int) ([]Record, error) {
-	rows, err := s.db.Query(
-		"SELECT reported_at, payload FROM metrics ORDER BY reported_at DESC LIMIT ?",
-		n,
-	)
+func (s *Store) QueryMetrics(f MetricsFilter) ([]Record, error) {
+	var where []string
+	var args []any
+
+	if !f.Since.IsZero() {
+		where = append(where, "reported_at >= ?")
+		args = append(args, f.Since.Format(time.RFC3339Nano))
+	}
+	if f.Commit != "" {
+		where = append(where, "json_extract(payload, '$.version.commit') = ?")
+		args = append(args, f.Commit)
+	}
+	if f.Branch != "" {
+		where = append(where, "json_extract(payload, '$.version.branch') = ?")
+		args = append(args, f.Branch)
+	}
+	if f.GoVersion != "" {
+		where = append(where, "json_extract(payload, '$.version.go_version') = ?")
+		args = append(args, f.GoVersion)
+	}
+	if f.HasFailures {
+		where = append(where, "json_extract(payload, '$.total_fails') > 0")
+	}
+
+	query := "SELECT reported_at, payload FROM metrics"
+	if len(where) > 0 {
+		query += " WHERE " + strings.Join(where, " AND ")
+	}
+
+	if f.Last > 0 {
+		query += " ORDER BY reported_at DESC LIMIT ?"
+		args = append(args, f.Last)
+	} else {
+		query += " ORDER BY reported_at ASC"
+	}
+
+	rows, err := s.db.Query(query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -86,27 +117,13 @@ func (s *Store) QueryLast(n int) ([]Record, error) {
 	if err != nil {
 		return nil, err
 	}
-	// reverse to chronological order
-	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
-		records[i], records[j] = records[j], records[i]
+
+	if f.Last > 0 {
+		for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
+			records[i], records[j] = records[j], records[i]
+		}
 	}
 	return records, nil
-}
-
-func (s *Store) Latest() (*Record, error) {
-	row := s.db.QueryRow(
-		"SELECT reported_at, payload FROM metrics ORDER BY reported_at DESC LIMIT 1",
-	)
-	var ts string
-	var payload string
-	if err := row.Scan(&ts, &payload); err != nil {
-		if err == sql.ErrNoRows {
-			return nil, nil
-		}
-		return nil, err
-	}
-	t, _ := time.Parse(time.RFC3339Nano, ts)
-	return &Record{ReportedAt: t, Payload: json.RawMessage(payload)}, nil
 }
 
 func (s *Store) InsertSystemMetrics(collectedAt time.Time, payload json.RawMessage) error {
