@@ -1,0 +1,25 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+DOMAIN="${DOMAIN:?Set DOMAIN to your public hostname, e.g. DOMAIN=status.example.com}"
+REPO="https://raw.githubusercontent.com/sokkelorg/fleet-reporter/main"
+DIR="/opt/fleet-reporter"
+
+echo "==> Setting up fleet-reporter in ${DIR}"
+mkdir -p "$DIR"
+
+echo "==> Downloading compose files"
+curl -fsSL "$REPO/compose.yml" -o "$DIR/compose.yml"
+curl -fsSL "$REPO/Caddyfile" -o "$DIR/Caddyfile"
+
+echo "==> Writing .env"
+cat > "$DIR/.env" <<EOF
+DOMAIN=${DOMAIN}
+EOF
+
+echo "==> Starting services"
+docker compose -f "$DIR/compose.yml" --project-directory "$DIR" up -d --pull always
+
+echo "==> Done."
+echo "    Public:  https://${DOMAIN}/status"
+echo "    Local:   curl -X POST http://127.0.0.1:8080/metrics -d @payload.json"

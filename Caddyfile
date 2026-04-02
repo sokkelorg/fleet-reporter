@@ -1,0 +1,6 @@
+{$DOMAIN} {
+	handle /status {
+		reverse_proxy fleet-reporter:8080
+	}
+	respond 404
+}

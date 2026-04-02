@@ -1,0 +1,33 @@
+services:
+  fleet-reporter:
+    image: ghcr.io/sokkelorg/fleet-reporter:main
+    restart: unless-stopped
+    environment:
+      - DB_PATH=/data/fleet-reporter.db
+    volumes:
+      - data:/data
+    expose:
+      - "8080"
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    environment:
+      - DOMAIN=${DOMAIN:?Set DOMAIN in .env}
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - fleet-reporter
+
+volumes:
+  data:
+  caddy_data:
+  caddy_config:
