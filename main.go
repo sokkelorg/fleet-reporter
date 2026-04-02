@@ -13,9 +13,8 @@ import (
 	"github.com/sokkelorg/fleet-reporter/system"
 )
 
-type StatusResponse struct {
-	Simrunner   []storage.Record `json:"simrunner"`
-	System      []storage.Record `json:"system"`
+type statsResponse struct {
+	Data        []storage.Record `json:"data"`
 	CollectedAt string           `json:"collected_at"`
 }
 
@@ -48,7 +47,7 @@ func (s *server) handlePostMetrics(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(http.StatusNoContent)
 }
 
-func (s *server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
+func (s *server) handleStatsSimulation(w http.ResponseWriter, r *http.Request) {
 	if r.Method != http.MethodGet {
 		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 		return
@@ -58,32 +57,19 @@ func (s *server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	since := parseSince(q.Get("since"))
 	last := parseLast(q.Get("last"))
 
-	var simRecords, sysRecords []storage.Record
+	var records []storage.Record
 	var err error
 
 	switch {
 	case !since.IsZero():
-		simRecords, err = s.store.QuerySince(since)
-		if err == nil {
-			sysRecords, err = s.store.QuerySystemSince(since)
-		}
+		records, err = s.store.QuerySince(since)
 	case last > 0:
-		simRecords, err = s.store.QueryLast(last)
-		if err == nil {
-			sysRecords, err = s.store.QuerySystemLast(last)
-		}
+		records, err = s.store.QueryLast(last)
 	default:
 		rec, qerr := s.store.Latest()
 		err = qerr
 		if rec != nil {
-			simRecords = []storage.Record{*rec}
-		}
-		if err == nil {
-			sysRec, qerr := s.store.LatestSystem()
-			err = qerr
-			if sysRec != nil {
-				sysRecords = []storage.Record{*sysRec}
-			}
+			records = []storage.Record{*rec}
 		}
 	}
 
@@ -92,12 +78,48 @@ func (s *server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	resp := StatusResponse{
-		Simrunner:   simRecords,
-		System:      sysRecords,
-		CollectedAt: time.Now().UTC().Format(time.RFC3339),
+	writeStats(w, records)
+}
+
+func (s *server) handleStatsSystem(w http.ResponseWriter, r *http.Request) {
+	if r.Method != http.MethodGet {
+		http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+		return
 	}
 
+	q := r.URL.Query()
+	since := parseSince(q.Get("since"))
+	last := parseLast(q.Get("last"))
+
+	var records []storage.Record
+	var err error
+
+	switch {
+	case !since.IsZero():
+		records, err = s.store.QuerySystemSince(since)
+	case last > 0:
+		records, err = s.store.QuerySystemLast(last)
+	default:
+		rec, qerr := s.store.LatestSystem()
+		err = qerr
+		if rec != nil {
+			records = []storage.Record{*rec}
+		}
+	}
+
+	if err != nil {
+		http.Error(w, "query error: "+err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	writeStats(w, records)
+}
+
+func writeStats(w http.ResponseWriter, records []storage.Record) {
+	resp := statsResponse{
+		Data:        records,
+		CollectedAt: time.Now().UTC().Format(time.RFC3339),
+	}
 	w.Header().Set("Content-Type", "application/json")
 	json.NewEncoder(w).Encode(resp)
 }
@@ -202,7 +224,8 @@ func main() {
 
 	mux := http.NewServeMux()
 	mux.HandleFunc("/metrics", s.handlePostMetrics)
-	mux.HandleFunc("/status", s.handleGetStatus)
+	mux.HandleFunc("/stats/system", s.handleStatsSystem)
+	mux.HandleFunc("/stats/simulation", s.handleStatsSimulation)
 
 	log.Printf("listening on %s", addr)
 	if err := http.ListenAndServe(addr, mux); err != nil {

@@ -15,7 +15,7 @@ To update, run the same command again. If DOMAIN is already configured it will b
 This sets up two containers:
 
 - **fleet-reporter** — accepts metrics on `127.0.0.1:4850` (local only)
-- **caddy** — reverse proxy exposing only `/status` publicly with automatic HTTPS
+- **caddy** — reverse proxy exposing `/stats/*` publicly with automatic HTTPS
 
 ## Usage
 
@@ -27,17 +27,21 @@ curl -X POST http://127.0.0.1:4850/metrics \
   -d @payload.json
 ```
 
-### Query status
+### Query stats
 
 ```bash
-# Latest report
-curl https://status.example.com/status
+# Latest simulation report
+curl https://status.example.com/stats/simulation
 
-# Last N reports
-curl https://status.example.com/status?last=10
+# Latest system metrics
+curl https://status.example.com/stats/system
 
-# All reports since a timestamp
-curl https://status.example.com/status?since=2026-04-02T10:00:00Z
+# Last N entries
+curl https://status.example.com/stats/simulation?last=10
+
+# All entries since a timestamp or relative duration
+curl https://status.example.com/stats/system?since=2026-04-02T10:00:00Z
+curl https://status.example.com/stats/simulation?since=30d
 ```
 
 ## Configuration
