@@ -15,7 +15,7 @@ import (
 
 type StatusResponse struct {
 	Simrunner   []storage.Record `json:"simrunner"`
-	System      *system.Metrics  `json:"system"`
+	System      []storage.Record `json:"system"`
 	CollectedAt string           `json:"collected_at"`
 }
 
@@ -54,28 +54,36 @@ func (s *server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	sysMetrics, err := system.Collect()
-	if err != nil {
-		http.Error(w, "failed to collect system metrics: "+err.Error(), http.StatusInternalServerError)
-		return
-	}
-
 	q := r.URL.Query()
 	since := parseSince(q.Get("since"))
 	last := parseLast(q.Get("last"))
 
-	var records []storage.Record
+	var simRecords, sysRecords []storage.Record
+	var err error
 
 	switch {
 	case !since.IsZero():
-		records, err = s.store.QuerySince(since)
+		simRecords, err = s.store.QuerySince(since)
+		if err == nil {
+			sysRecords, err = s.store.QuerySystemSince(since)
+		}
 	case last > 0:
-		records, err = s.store.QueryLast(last)
+		simRecords, err = s.store.QueryLast(last)
+		if err == nil {
+			sysRecords, err = s.store.QuerySystemLast(last)
+		}
 	default:
 		rec, qerr := s.store.Latest()
 		err = qerr
 		if rec != nil {
-			records = []storage.Record{*rec}
+			simRecords = []storage.Record{*rec}
+		}
+		if err == nil {
+			sysRec, qerr := s.store.LatestSystem()
+			err = qerr
+			if sysRec != nil {
+				sysRecords = []storage.Record{*sysRec}
+			}
 		}
 	}
 
@@ -85,8 +93,8 @@ func (s *server) handleGetStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := StatusResponse{
-		Simrunner:   records,
-		System:      sysMetrics,
+		Simrunner:   simRecords,
+		System:      sysRecords,
 		CollectedAt: time.Now().UTC().Format(time.RFC3339),
 	}
 
@@ -98,11 +106,39 @@ func parseSince(v string) time.Time {
 	if v == "" {
 		return time.Time{}
 	}
-	t, err := time.Parse(time.RFC3339, v)
-	if err != nil {
-		return time.Time{}
+	// Try RFC3339 first
+	if t, err := time.Parse(time.RFC3339, v); err == nil {
+		return t
 	}
-	return t
+	// Try relative duration like "30d", "12h", "5m"
+	if d, ok := parseRelativeDuration(v); ok {
+		return time.Now().UTC().Add(-d)
+	}
+	return time.Time{}
+}
+
+func parseRelativeDuration(v string) (time.Duration, bool) {
+	if len(v) < 2 {
+		return 0, false
+	}
+	numStr := v[:len(v)-1]
+	unit := v[len(v)-1]
+	n, err := strconv.Atoi(numStr)
+	if err != nil || n <= 0 {
+		return 0, false
+	}
+	switch unit {
+	case 'm':
+		return time.Duration(n) * time.Minute, true
+	case 'h':
+		return time.Duration(n) * time.Hour, true
+	case 'd':
+		return time.Duration(n) * 24 * time.Hour, true
+	case 'w':
+		return time.Duration(n) * 7 * 24 * time.Hour, true
+	default:
+		return 0, false
+	}
 }
 
 func parseLast(v string) int {
@@ -114,6 +150,32 @@ func parseLast(v string) int {
 		return 0
 	}
 	return n
+}
+
+func startSystemSampler(store *storage.Store, interval time.Duration) {
+	go func() {
+		sample := func() {
+			m, err := system.Collect()
+			if err != nil {
+				log.Printf("system sampler: %v", err)
+				return
+			}
+			payload, err := json.Marshal(m)
+			if err != nil {
+				log.Printf("system sampler: marshal: %v", err)
+				return
+			}
+			if err := store.InsertSystemMetrics(time.Now().UTC(), payload); err != nil {
+				log.Printf("system sampler: insert: %v", err)
+			}
+		}
+		sample()
+		ticker := time.NewTicker(interval)
+		defer ticker.Stop()
+		for range ticker.C {
+			sample()
+		}
+	}()
 }
 
 func main() {
@@ -134,6 +196,7 @@ func main() {
 	defer store.Close()
 
 	store.StartCleaner(5 * time.Minute)
+	startSystemSampler(store, 30*time.Second)
 
 	s := &server{store: store}
 

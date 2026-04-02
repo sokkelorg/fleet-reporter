@@ -1,25 +1,35 @@
 package system
 
 import (
+	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
 	"strconv"
 	"strings"
-
+	"time"
 )
 
+type CoreUsage struct {
+	Core    int     `json:"core"`
+	UsePct  float64 `json:"use_pct"`
+	UserPct float64 `json:"user_pct"`
+	SysPct  float64 `json:"sys_pct"`
+	IdlePct float64 `json:"idle_pct"`
+}
+
 type Metrics struct {
-	Hostname      string  `json:"hostname"`
-	OS            string  `json:"os"`
-	Arch          string  `json:"arch"`
-	NumCPU        int     `json:"num_cpu"`
-	LoadAvg1      float64 `json:"load_avg_1"`
-	LoadAvg5      float64 `json:"load_avg_5"`
-	LoadAvg15     float64 `json:"load_avg_15"`
-	MemTotalBytes uint64  `json:"mem_total_bytes"`
-	MemUsedBytes  uint64  `json:"mem_used_bytes"`
-	MemUsedPct    float64 `json:"mem_used_pct"`
+	Hostname      string      `json:"hostname"`
+	OS            string      `json:"os"`
+	Arch          string      `json:"arch"`
+	NumCPU        int         `json:"num_cpu"`
+	LoadAvg1      float64     `json:"load_avg_1"`
+	LoadAvg5      float64     `json:"load_avg_5"`
+	LoadAvg15     float64     `json:"load_avg_15"`
+	Cores         []CoreUsage `json:"cores"`
+	MemTotalBytes uint64      `json:"mem_total_bytes"`
+	MemUsedBytes  uint64      `json:"mem_used_bytes"`
+	MemUsedPct    float64     `json:"mem_used_pct"`
 }
 
 func Collect() (*Metrics, error) {
@@ -36,6 +46,9 @@ func Collect() (*Metrics, error) {
 		return nil, err
 	}
 	if err := collectMemory(m); err != nil {
+		return nil, err
+	}
+	if err := collectCPUPerCore(m); err != nil {
 		return nil, err
 	}
 
@@ -126,6 +139,103 @@ func parseVmStatValue(line string) uint64 {
 	s := strings.TrimSpace(strings.TrimSuffix(strings.TrimSpace(parts[1]), "."))
 	v, _ := strconv.ParseUint(s, 10, 64)
 	return v
+}
+
+func collectCPUPerCore(m *Metrics) error {
+	switch runtime.GOOS {
+	case "linux":
+		return collectCPUPerCoreLinux(m)
+	default:
+		return collectCPUPerCoreDarwin(m)
+	}
+}
+
+// Samples /proc/stat twice with a 200ms interval to compute per-core usage.
+func collectCPUPerCoreLinux(m *Metrics) error {
+	first, err := readProcStat()
+	if err != nil {
+		return err
+	}
+	time.Sleep(200 * time.Millisecond)
+	second, err := readProcStat()
+	if err != nil {
+		return err
+	}
+
+	for i, s1 := range first {
+		if i >= len(second) {
+			break
+		}
+		s2 := second[i]
+		user := s2.user - s1.user
+		sys := s2.system - s1.system
+		idle := s2.idle - s1.idle
+		total := user + sys + idle + (s2.other - s1.other)
+		if total == 0 {
+			m.Cores = append(m.Cores, CoreUsage{Core: i})
+			continue
+		}
+		m.Cores = append(m.Cores, CoreUsage{
+			Core:    i,
+			UserPct: float64(user) / float64(total) * 100,
+			SysPct:  float64(sys) / float64(total) * 100,
+			IdlePct: float64(idle) / float64(total) * 100,
+			UsePct:  float64(total-idle) / float64(total) * 100,
+		})
+	}
+	return nil
+}
+
+type cpuSample struct {
+	user, system, idle, other uint64
+}
+
+func readProcStat() ([]cpuSample, error) {
+	data, err := os.ReadFile("/proc/stat")
+	if err != nil {
+		return nil, err
+	}
+	var samples []cpuSample
+	for _, line := range strings.Split(string(data), "\n") {
+		if !strings.HasPrefix(line, "cpu") || strings.HasPrefix(line, "cpu ") {
+			continue
+		}
+		fields := strings.Fields(line)
+		if len(fields) < 5 {
+			continue
+		}
+		user, _ := strconv.ParseUint(fields[1], 10, 64)
+		nice, _ := strconv.ParseUint(fields[2], 10, 64)
+		system, _ := strconv.ParseUint(fields[3], 10, 64)
+		idle, _ := strconv.ParseUint(fields[4], 10, 64)
+		var other uint64
+		for _, f := range fields[5:] {
+			v, _ := strconv.ParseUint(f, 10, 64)
+			other += v
+		}
+		samples = append(samples, cpuSample{
+			user:   user + nice,
+			system: system,
+			idle:   idle,
+			other:  other,
+		})
+	}
+	return samples, nil
+}
+
+func collectCPUPerCoreDarwin(m *Metrics) error {
+	// Use top in logging mode for one sample
+	out, err := exec.Command("top", "-l", "2", "-n", "0", "-stats", "cpu").Output()
+	if err != nil {
+		return fmt.Errorf("top: %w", err)
+	}
+	// top -l 2 gives two samples; parse per-core from the last "CPU usage" line
+	// Fallback: just report load averages divided across cores (already in loadavg fields)
+	// macOS doesn't easily expose per-core usage without IOKit, so we use mpstat-style parsing
+	_ = out
+	// On macOS, per-core CPU isn't easily available without cgo/IOKit.
+	// Leave cores empty on macOS — load averages are still reported.
+	return nil
 }
 
 func collectMemoryLinux(m *Metrics) error {

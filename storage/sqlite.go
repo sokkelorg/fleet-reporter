@@ -31,6 +31,13 @@ func Open(path string) (*Store, error) {
 			payload JSON NOT NULL
 		);
 		CREATE INDEX IF NOT EXISTS idx_metrics_reported_at ON metrics(reported_at);
+
+		CREATE TABLE IF NOT EXISTS system_metrics (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			collected_at TEXT NOT NULL,
+			payload JSON NOT NULL
+		);
+		CREATE INDEX IF NOT EXISTS idx_system_metrics_collected_at ON system_metrics(collected_at);
 	`); err != nil {
 		db.Close()
 		return nil, fmt.Errorf("create table: %w", err)
@@ -102,6 +109,63 @@ func (s *Store) Latest() (*Record, error) {
 	return &Record{ReportedAt: t, Payload: json.RawMessage(payload)}, nil
 }
 
+func (s *Store) InsertSystemMetrics(collectedAt time.Time, payload json.RawMessage) error {
+	_, err := s.db.Exec(
+		"INSERT INTO system_metrics (collected_at, payload) VALUES (?, ?)",
+		collectedAt.Format(time.RFC3339Nano),
+		string(payload),
+	)
+	return err
+}
+
+func (s *Store) QuerySystemSince(since time.Time) ([]Record, error) {
+	rows, err := s.db.Query(
+		"SELECT collected_at, payload FROM system_metrics WHERE collected_at >= ? ORDER BY collected_at ASC",
+		since.Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRecords(rows)
+}
+
+func (s *Store) QuerySystemLast(n int) ([]Record, error) {
+	rows, err := s.db.Query(
+		"SELECT collected_at, payload FROM system_metrics ORDER BY collected_at DESC LIMIT ?",
+		n,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	records, err := scanRecords(rows)
+	if err != nil {
+		return nil, err
+	}
+	for i, j := 0, len(records)-1; i < j; i, j = i+1, j-1 {
+		records[i], records[j] = records[j], records[i]
+	}
+	return records, nil
+}
+
+func (s *Store) LatestSystem() (*Record, error) {
+	row := s.db.QueryRow(
+		"SELECT collected_at, payload FROM system_metrics ORDER BY collected_at DESC LIMIT 1",
+	)
+	var ts string
+	var payload string
+	if err := row.Scan(&ts, &payload); err != nil {
+		if err == sql.ErrNoRows {
+			return nil, nil
+		}
+		return nil, err
+	}
+	t, _ := time.Parse(time.RFC3339Nano, ts)
+	return &Record{ReportedAt: t, Payload: json.RawMessage(payload)}, nil
+}
+
 // DBSize returns the current database file size in bytes.
 func (s *Store) DBSize() (int64, error) {
 	info, err := os.Stat(s.path)
@@ -111,30 +175,41 @@ func (s *Store) DBSize() (int64, error) {
 	return info.Size(), nil
 }
 
-// Prune deletes the oldest 10% of records.
+// Prune deletes the oldest 10% of records from both tables.
 func (s *Store) Prune() (int64, error) {
-	var count int64
-	err := s.db.QueryRow("SELECT COUNT(*) FROM metrics").Scan(&count)
-	if err != nil {
-		return 0, err
+	var total int64
+	for _, q := range []struct {
+		countSQL  string
+		deleteSQL string
+	}{
+		{
+			"SELECT COUNT(*) FROM metrics",
+			"DELETE FROM metrics WHERE id IN (SELECT id FROM metrics ORDER BY reported_at ASC LIMIT ?)",
+		},
+		{
+			"SELECT COUNT(*) FROM system_metrics",
+			"DELETE FROM system_metrics WHERE id IN (SELECT id FROM system_metrics ORDER BY collected_at ASC LIMIT ?)",
+		},
+	} {
+		var count int64
+		if err := s.db.QueryRow(q.countSQL).Scan(&count); err != nil {
+			return total, err
+		}
+		if count == 0 {
+			continue
+		}
+		toDelete := count / 10
+		if toDelete < 1 {
+			toDelete = 1
+		}
+		res, err := s.db.Exec(q.deleteSQL, toDelete)
+		if err != nil {
+			return total, err
+		}
+		n, _ := res.RowsAffected()
+		total += n
 	}
-	if count == 0 {
-		return 0, nil
-	}
-
-	toDelete := count / 10
-	if toDelete < 1 {
-		toDelete = 1
-	}
-
-	res, err := s.db.Exec(
-		"DELETE FROM metrics WHERE id IN (SELECT id FROM metrics ORDER BY reported_at ASC LIMIT ?)",
-		toDelete,
-	)
-	if err != nil {
-		return 0, err
-	}
-	return res.RowsAffected()
+	return total, nil
 }
 
 // Vacuum reclaims disk space after deletions.
