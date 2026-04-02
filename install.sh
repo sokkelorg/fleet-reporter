@@ -1,9 +1,15 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-DOMAIN="${DOMAIN:?Set DOMAIN to your public hostname, e.g. DOMAIN=status.example.com}"
 REPO="https://raw.githubusercontent.com/sokkelorg/fleet-reporter/main"
 DIR="/opt/fleet-reporter"
+
+# Use existing .env if present (allows re-running to update)
+if [ -z "${DOMAIN:-}" ] && [ -f "$DIR/.env" ]; then
+  source "$DIR/.env"
+fi
+
+DOMAIN="${DOMAIN:?Set DOMAIN to your public hostname, e.g. DOMAIN=surtr.sokkel.dev bash install.sh}"
 
 echo "==> Setting up fleet-reporter in ${DIR}"
 mkdir -p "$DIR"

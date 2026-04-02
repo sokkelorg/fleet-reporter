@@ -7,8 +7,10 @@ Lightweight HTTP server that collects metrics from a simulation runner and expos
 Requires Docker and Docker Compose on the target server.
 
 ```bash
-DOMAIN=status.example.com curl -fsSL https://raw.githubusercontent.com/sokkelorg/fleet-reporter/main/install.sh | sudo -E bash
+curl -fsSL https://raw.githubusercontent.com/sokkelorg/fleet-reporter/main/install.sh | sudo DOMAIN=status.example.com bash
 ```
+
+To update, run the same command again. If DOMAIN is already configured it will be read from the existing install.
 
 This sets up two containers:
 
