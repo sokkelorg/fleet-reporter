@@ -28,4 +28,4 @@ docker compose -f "$DIR/compose.yml" --project-directory "$DIR" up -d --pull alw
 
 echo "==> Done."
 echo "    Public:  https://${DOMAIN}/status"
-echo "    Local:   curl -X POST http://127.0.0.1:8080/metrics -d @payload.json"
+echo "    Local:   curl -X POST http://127.0.0.1:4850/metrics -d @payload.json"

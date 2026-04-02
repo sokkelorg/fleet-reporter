@@ -14,7 +14,7 @@ To update, run the same command again. If DOMAIN is already configured it will b
 
 This sets up two containers:
 
-- **fleet-reporter** — accepts metrics on `127.0.0.1:8080` (local only)
+- **fleet-reporter** — accepts metrics on `127.0.0.1:4850` (local only)
 - **caddy** — reverse proxy exposing only `/status` publicly with automatic HTTPS
 
 ## Usage
@@ -22,7 +22,7 @@ This sets up two containers:
 ### Report metrics (from the simulation runner)
 
 ```bash
-curl -X POST http://127.0.0.1:8080/metrics \
+curl -X POST http://127.0.0.1:4850/metrics \
   -H "Content-Type: application/json" \
   -d @payload.json
 ```
@@ -45,7 +45,7 @@ curl https://status.example.com/status?since=2026-04-02T10:00:00Z
 | Environment variable | Default | Description |
 |---|---|---|
 | `DOMAIN` | *(required)* | Public hostname for HTTPS |
-| `LISTEN_ADDR` | `:8080` | Address the app listens on |
+| `LISTEN_ADDR` | `:4850` | Address the app listens on |
 | `DB_PATH` | `fleet-reporter.db` | Path to the SQLite database |
 
 Data is persisted in Docker volumes. The database is automatically cleaned when it exceeds 100 GB.

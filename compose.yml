@@ -7,9 +7,9 @@ services:
     volumes:
       - data:/data
     expose:
-      - "8080"
+      - "4850"
     ports:
-      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:4850:4850"
 
   caddy:
     image: caddy:2
