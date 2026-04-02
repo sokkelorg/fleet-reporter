@@ -39,19 +39,3 @@ jobs:
           push: true
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
-
-  make-public:
-    needs: build-and-push
-    runs-on: ubuntu-latest
-    permissions:
-      packages: write
-    steps:
-      - name: Set package visibility to public
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          gh api \
-            --method PATCH \
-            /orgs/sokkelorg/packages/container/fleet-reporter \
-            -f visibility=public \
-            || echo "Failed to set visibility (may need org admin token)"
