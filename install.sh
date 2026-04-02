@@ -23,9 +23,12 @@ cat > "$DIR/.env" <<EOF
 DOMAIN=${DOMAIN}
 EOF
 
+echo "==> Pulling latest images"
+docker compose -f "$DIR/compose.yml" --project-directory "$DIR" pull
+
 echo "==> Starting services"
-docker compose -f "$DIR/compose.yml" --project-directory "$DIR" up -d --pull always
+docker compose -f "$DIR/compose.yml" --project-directory "$DIR" up -d --force-recreate
 
 echo "==> Done."
-echo "    Public:  https://${DOMAIN}/status"
+echo "    Public:  https://${DOMAIN}/stats/simulation"
 echo "    Local:   curl -X POST http://127.0.0.1:4850/metrics -d @payload.json"
