@@ -2,5 +2,12 @@
 	handle /stats/* {
 		reverse_proxy fleet-reporter:4850
 	}
+	@prom_scrape {
+		path /metrics
+		method GET
+	}
+	handle @prom_scrape {
+		reverse_proxy fleet-reporter:4850
+	}
 	respond 404
 }
