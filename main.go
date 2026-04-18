@@ -218,7 +218,7 @@ func main() {
 	s := &server{store: store}
 
 	mux := http.NewServeMux()
-	mux.HandleFunc("/metrics", s.handlePostMetrics)
+	mux.HandleFunc("/metrics", s.handleMetrics)
 	mux.HandleFunc("/stats/system", s.handleStatsSystem)
 	mux.HandleFunc("/stats/simulation", s.handleStatsSimulation)
 

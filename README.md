@@ -27,6 +27,14 @@ curl -X POST http://127.0.0.1:4850/metrics \
   -d @payload.json
 ```
 
+### Prometheus scrape
+
+`GET /metrics` returns the latest system sample, the latest simulation report, and the database size in Prometheus text exposition format.
+
+```bash
+curl http://127.0.0.1:4850/metrics
+```
+
 ### Query stats
 
 ```bash
