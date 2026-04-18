@@ -145,6 +145,7 @@ func writeSimulationMetrics(w io.Writer, rec storage.Record) {
 		Version struct {
 			Commit    string `json:"commit"`
 			Branch    string `json:"branch"`
+			BuildTime string `json:"build_time"`
 			GoVersion string `json:"go_version"`
 		} `json:"version"`
 		TotalFails *float64 `json:"total_fails"`
@@ -154,6 +155,7 @@ func writeSimulationMetrics(w io.Writer, rec storage.Record) {
 	versionLabels := map[string]string{
 		"commit":     p.Version.Commit,
 		"branch":     p.Version.Branch,
+		"build_time": p.Version.BuildTime,
 		"go_version": p.Version.GoVersion,
 	}
 
