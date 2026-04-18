@@ -6,6 +6,7 @@ services:
       - DB_PATH=/data/fleet-reporter.db
     volumes:
       - data:/data
+      - /etc/hostname:/host/etc/hostname:ro
     expose:
       - "4850"
     ports:

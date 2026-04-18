@@ -33,10 +33,8 @@ type Metrics struct {
 }
 
 func Collect() (*Metrics, error) {
-	hostname, _ := os.Hostname()
-
 	m := &Metrics{
-		Hostname: hostname,
+		Hostname: resolveHostname(),
 		OS:       runtime.GOOS,
 		Arch:     runtime.GOARCH,
 		NumCPU:   runtime.NumCPU(),
@@ -53,6 +51,21 @@ func Collect() (*Metrics, error) {
 	}
 
 	return m, nil
+}
+
+// resolveHostname prefers an explicit HOSTNAME_OVERRIDE env var, then a
+// host-mounted /host/etc/hostname (for containers), then the syscall hostname.
+func resolveHostname() string {
+	if v := strings.TrimSpace(os.Getenv("HOSTNAME_OVERRIDE")); v != "" {
+		return v
+	}
+	if data, err := os.ReadFile("/host/etc/hostname"); err == nil {
+		if v := strings.TrimSpace(string(data)); v != "" {
+			return v
+		}
+	}
+	h, _ := os.Hostname()
+	return h
 }
 
 func collectLoadAvg(m *Metrics) error {
