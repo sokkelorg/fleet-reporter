@@ -126,6 +126,31 @@ func (s *Store) QueryMetrics(f MetricsFilter) ([]Record, error) {
 	return records, nil
 }
 
+// LatestSimulationPerService returns the most recent metrics record for each
+// distinct value of $.version.service. Records without a service field are
+// grouped under the empty string.
+func (s *Store) LatestSimulationPerService() ([]Record, error) {
+	rows, err := s.db.Query(`
+		SELECT m.reported_at, m.payload
+		FROM metrics m
+		INNER JOIN (
+			SELECT
+				COALESCE(json_extract(payload, '$.version.service'), '') AS svc,
+				MAX(reported_at) AS max_ts
+			FROM metrics
+			GROUP BY svc
+		) latest
+		ON COALESCE(json_extract(m.payload, '$.version.service'), '') = latest.svc
+		AND m.reported_at = latest.max_ts
+		ORDER BY m.reported_at DESC
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	return scanRecords(rows)
+}
+
 func (s *Store) InsertSystemMetrics(collectedAt time.Time, payload json.RawMessage) error {
 	_, err := s.db.Exec(
 		"INSERT INTO system_metrics (collected_at, payload) VALUES (?, ?)",

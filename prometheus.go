@@ -35,10 +35,8 @@ func (s *server) handlePrometheus(w http.ResponseWriter, _ *http.Request) {
 		}
 	}
 
-	sims, _ := s.store.QueryMetrics(storage.MetricsFilter{Last: 1})
-	if len(sims) > 0 {
-		writeSimulationMetrics(w, sims[0])
-	}
+	sims, _ := s.store.LatestSimulationPerService()
+	writeSimulationMetrics(w, sims)
 
 	if size, err := s.store.DBSize(); err == nil {
 		writeMetric(w, promMetric{
@@ -140,46 +138,82 @@ func writeSystemMetrics(w io.Writer, m *system.Metrics, collectedAt int64) {
 	})
 }
 
-func writeSimulationMetrics(w io.Writer, rec storage.Record) {
-	var p struct {
-		Version struct {
-			Commit    string `json:"commit"`
-			Branch    string `json:"branch"`
-			BuildTime string `json:"build_time"`
-			GoVersion string `json:"go_version"`
-		} `json:"version"`
-		TotalFails *float64 `json:"total_fails"`
-	}
-	_ = json.Unmarshal(rec.Payload, &p)
-
-	versionLabels := map[string]string{
-		"commit":     p.Version.Commit,
-		"branch":     p.Version.Branch,
-		"build_time": p.Version.BuildTime,
-		"go_version": p.Version.GoVersion,
+func writeSimulationMetrics(w io.Writer, records []storage.Record) {
+	if len(records) == 0 {
+		return
 	}
 
-	writeMetric(w, promMetric{
-		Name:    "fleet_reporter_simulation_info",
-		Help:    "Information about the most recently reported simulation run.",
-		Type:    "gauge",
-		Samples: []promSample{{Labels: versionLabels, Value: 1}},
-	})
+	type parsed struct {
+		service    map[string]string
+		totalFails *float64
+		reportedAt int64
+	}
 
-	if p.TotalFails != nil {
-		writeMetric(w, promMetric{
-			Name:    "fleet_reporter_simulation_total_fails",
-			Help:    "Number of failures in the most recently reported simulation run.",
-			Type:    "gauge",
-			Samples: []promSample{{Labels: versionLabels, Value: *p.TotalFails}},
+	runs := make([]parsed, 0, len(records))
+	for _, rec := range records {
+		var p struct {
+			Version struct {
+				Service   string `json:"service"`
+				Commit    string `json:"commit"`
+				Branch    string `json:"branch"`
+				BuildTime string `json:"build_time"`
+				GoVersion string `json:"go_version"`
+			} `json:"version"`
+			TotalFails *float64 `json:"total_fails"`
+		}
+		_ = json.Unmarshal(rec.Payload, &p)
+		runs = append(runs, parsed{
+			service: map[string]string{
+				"service":    p.Version.Service,
+				"commit":     p.Version.Commit,
+				"branch":     p.Version.Branch,
+				"build_time": p.Version.BuildTime,
+				"go_version": p.Version.GoVersion,
+			},
+			totalFails: p.TotalFails,
+			reportedAt: rec.ReportedAt.Unix(),
 		})
 	}
 
+	infoSamples := make([]promSample, 0, len(runs))
+	for _, r := range runs {
+		infoSamples = append(infoSamples, promSample{Labels: r.service, Value: 1})
+	}
+	writeMetric(w, promMetric{
+		Name:    "fleet_reporter_simulation_info",
+		Help:    "Information about the most recently reported simulation run per service.",
+		Type:    "gauge",
+		Samples: infoSamples,
+	})
+
+	failSamples := make([]promSample, 0, len(runs))
+	for _, r := range runs {
+		if r.totalFails == nil {
+			continue
+		}
+		failSamples = append(failSamples, promSample{Labels: r.service, Value: *r.totalFails})
+	}
+	if len(failSamples) > 0 {
+		writeMetric(w, promMetric{
+			Name:    "fleet_reporter_simulation_total_fails",
+			Help:    "Number of failures in the most recently reported simulation run per service.",
+			Type:    "gauge",
+			Samples: failSamples,
+		})
+	}
+
+	tsSamples := make([]promSample, 0, len(runs))
+	for _, r := range runs {
+		tsSamples = append(tsSamples, promSample{
+			Labels: map[string]string{"service": r.service["service"]},
+			Value:  float64(r.reportedAt),
+		})
+	}
 	writeMetric(w, promMetric{
 		Name:    "fleet_reporter_simulation_last_report_timestamp_seconds",
-		Help:    "Unix timestamp of the most recently reported simulation run.",
+		Help:    "Unix timestamp of the most recently reported simulation run per service.",
 		Type:    "gauge",
-		Samples: []promSample{{Value: float64(rec.ReportedAt.Unix())}},
+		Samples: tsSamples,
 	})
 }
 
